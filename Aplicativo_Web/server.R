@@ -41,23 +41,6 @@ function(input, output, session) {
     }
   })
   
-  # Mensaje cuando no hay variables disponibles
-  output$mensaje_vars <- renderUI({
-    req(tvar())
-    choices <- tvar()[Tipo == input$tipo]$Variable
-    if (length(choices) == 0) {
-      tags$p(style = "color: red;", "No hay variables disponibles para este tipo.")
-    } else {
-      NULL
-    }
-  })
-  
-  output$resumen <- renderPrint({
-    # Validar que input$var no sea NULL ni vacío
-    req(input$var, input$var != "")
-    datos %>% dplyr::select(input$var) %>% summary(.)
-  })
-  
   output$grafico <- renderPlot({
     # Validar que input$var no sea NULL ni vacío
     req(input$var, input$var != "")
