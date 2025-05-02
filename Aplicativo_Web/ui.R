@@ -4,8 +4,10 @@ library(shiny)
 fluidPage(
   tags$style("h1 {color: #9A9A9A; font-size:35px}"),
   tags$style("h2 {color: #A569BD; font-size:25px}"),
-  fluidRow(column(width = 3, tags$img(src="EPN_logo.png", width = "60px", height = "60px")),
-           column(width = 9, h1("Primer aplicativo Simulación", style = "text-align:center"))),
+  fluidRow(
+    column(width = 3, tags$img(src="EPN_logo.png", width = "60px", height = "60px")),
+    column(width = 9, h1("Primer aplicativo Simulación", style = "text-align:center"))
+  ),
   
   # Sidebar with a slider input for number of bins
   sidebarLayout(
@@ -14,7 +16,8 @@ fluidPage(
                    choiceNames = c("Cuantitativas", "Cualitativas"),
                    choiceValues = c("numeric", "character"), selected = "numeric"),
       selectInput("var", "Variable seleccionada",
-                  choices = NULL) # Inicializar sin opciones
+                  choices = NULL),
+      uiOutput("mensaje_vars") # Mensaje para cuando no hay variables
     ),
     
     # Show a plot of the generated distribution
@@ -26,3 +29,4 @@ fluidPage(
     )
   )
 )
+
