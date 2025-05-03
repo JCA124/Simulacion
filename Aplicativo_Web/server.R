@@ -1,54 +1,44 @@
 library(shiny)
 library(tidyverse)
-library(lubridate)
-library(data.table)
 
 # Carga de datos
 load("/cloud/project/Aplicativo_Web/data/Info.RData")
 
 # Ajuste de formato fecha
-datos[, fecha_corte := ymd(fecha_corte)]
+datos[, fecha_corte:= ymd(fecha_corte)]
 datos[, fecha_nacimiento := ymd(fecha_nacimiento)]
 
 # Define server logic required to draw a histogram
 function(input, output, session) {
   
-  # Definir tvar como un objeto reactivo
-  tvar <- reactive({
-    req(datos) # Asegurarse de que datos existe
-    classes <- tryCatch({
-      map_chr(datos, class)
-    }, error = function(e) {
-      message("Error al obtener clases de columnas: ", e$message)
-      character(0) # Retornar vector vacío si hay error
-    })
-    if (length(classes) == 0) {
-      data.table(Variable = character(), Tipo = character())
-    } else {
-      data.table(Variable = names(classes), Tipo = unname(classes))
-    }
-  })
+  # Filtro de variables por su tipo
+  tvar <- datos |> map_chr(class) 
+  tvar <- data.table(Variable = names(tvar) , Tipo = unname(tvar))
   
   observe({
-    # Asegurarse de que tvar() esté disponible
-    req(tvar())
-    # Actualizar las opciones del selectInput según el tipo seleccionado
-    choices <- tvar()[Tipo == input$tipo]$Variable
-    if (length(choices) > 0) {
-      updateSelectInput(session, "var", choices = choices, selected = choices[1])
-    } else {
-      updateSelectInput(session, "var", choices = NULL, selected = NULL)
-    }
+    updateSelectInput(session, "var", choices = tvar[Tipo == input$tipo])
   })
+  
+  output$resumen <- renderPrint({
+    datos %>% dplyr::select(input$var) %>% summary(.)
+  })
+  
   
   output$grafico <- renderPlot({
-    # Validar que input$var no sea NULL ni vacío
-    req(input$var, input$var != "")
-    if (input$tipo == "numeric") {
-      datos %>% dplyr::select(input$var) %>% pull(.) %>% hist(.)
+    if(input$tipo == "numeric"){
+      datos %>% dplyr::select(input$var) %>% pull(.) %>% hist(main=paste("Histograma de",input$var),
+                                                              col=input$Color_barras,border = input$Color_bordes,
+                                                              lwd=4)
     } else {
-      datos %>% dplyr::select(input$var) %>% table(.) %>% barplot(.)
+      datos %>% dplyr::select(input$var) %>% table(.) %>% barplot(main=paste("Histograma de",input$var),
+                                                                  col=input$Color_barras,border = input$Color_bordes,
+                                                                  lwd=4)
     }
   })
-}
   
+  output$grafico_dinamico <- renderUI({
+    plotOutput("grafico", width = input$size_hist)
+  })
+  
+  
+}
