@@ -2,6 +2,7 @@ library(shiny)
 library(kableExtra)
 library(data.table)
 library(ggplot2)
+library(shinycssloaders)
 
 # Método Congruencial Multiplicativo
 numeros_multiplicativo <- function(a, m, semilla, cantidad) {
@@ -36,8 +37,17 @@ crear_tabla <- function(numeros, filas, columnas) {
 # Lógica del servidor
 function(input, output, session) {
   
-  # Generar números aleatorios
-  datos_aleatorios <- reactive({
+  # Actualizar límites con botones de infinito
+  observeEvent(input$inf_neg, {
+    updateTextInput(session, "lim_inf", value = "-Inf")
+  })
+  
+  observeEvent(input$inf_pos, {
+    updateTextInput(session, "lim_sup", value = "Inf")
+  })
+  
+  # Generar números aleatorios para Números Aleatorios
+  datos_aleatorios <- eventReactive(input$mostrar, {
     list(
       multiplicativo = numeros_multiplicativo(a = input$constante, m = input$divisor, semilla = input$semilla, cantidad = input$cantidad),
       mixto = numeros_mixto(a = input$constante, c = input$incremento, m = input$divisor, semilla = input$semilla, cantidad = input$cantidad)
@@ -91,63 +101,169 @@ function(input, output, session) {
   })
   
   # Pestaña Integrales
-  coords <- eventReactive(input$calcular, {
-    x_vals <- seq(input$lim_inf, input$lim_sup, length.out = 100)
-    y_vals <- sapply(x_vals, function(x) { eval(parse(text = input$funcion)) })
+  # Procesar límites
+  limites <- eventReactive(input$calcular, {
+    lim_inf <- tryCatch(as.numeric(input$lim_inf), error = function(e) -Inf, warning = function(w) -Inf)
+    lim_sup <- tryCatch(as.numeric(input$lim_sup), error = function(e) Inf, warning = function(w) Inf)
+    if (tolower(input$lim_inf) == "-inf") lim_inf <- -Inf
+    if (tolower(input$lim_sup) == "inf") lim_sup <- Inf
+    list(lim_inf = lim_inf, lim_sup = lim_sup)
+  })
+  
+  # Función para evaluar
+  f <- function(x) {
+    tryCatch(eval(parse(text = input$funcion)), error = function(e) NA)
+  }
+  
+  # Generar puntos para el gráfico del área
+  coords_area <- eventReactive(input$calcular, {
+    req(input$calcular)
+    lim_inf <- limites()$lim_inf
+    lim_sup <- limites()$lim_sup
+    
+    if (is.infinite(lim_inf) && is.infinite(lim_sup)) {
+      x_vals <- seq(-5, 5, length.out = 100) # Para [-∞, ∞]
+    } else if (is.infinite(lim_inf)) {
+      x_vals <- seq(lim_sup - 10, lim_sup, length.out = 100) # Para [-∞, b]
+    } else if (is.infinite(lim_sup)) {
+      x_vals <- seq(lim_inf, lim_inf + 10, length.out = 100) # Para [a, ∞]
+    } else {
+      x_vals <- seq(min(lim_inf, lim_sup), max(lim_inf, lim_sup), length.out = 100)
+    }
+    
+    y_vals <- sapply(x_vals, f)
+    if (all(is.na(y_vals))) {
+      return(NULL)
+    }
     data.frame(x = x_vals, y = y_vals)
   })
   
-  output$graf_fun01 <- renderPlot({
+  # Calcular integral por Monte Carlo
+  monte_carlo <- eventReactive(input$calcular, {
     req(input$calcular)
-    f <- function(x) eval(parse(text = input$funcion))
-    datos <- coords()
-    delta_x <- (input$lim_sup - input$lim_inf) / (length(datos$x) - 1)
-    area <- (delta_x / 2) * (f(input$lim_inf) + 2 * sum(f(datos$x[2:(length(datos$x) - 1)])) + f(input$lim_sup))
-    
-    ggplot(datos, aes(x = x, y = y)) + 
-      geom_line(color = "blue", linewidth = 1) +
-      geom_area(aes(x = x, y = y), fill = "lightblue", alpha = 0.3) +
-      geom_vline(xintercept = input$lim_inf, linetype = "dashed", color = "red") +
-      geom_vline(xintercept = input$lim_sup, linetype = "dashed", color = "red") +
-      labs(title = paste("Área bajo f(x) =", input$funcion),
-           subtitle = paste("Intervalo:", input$lim_inf, "a", input$lim_sup),
-           x = "x",
-           y = "f(x)",
-           caption = paste("Área aproximada:", round(area, 4))) + 
-      theme_minimal()
-  })
-  
-  output$graf_aprox01 <- renderPlot({
-    req(input$calcular)
-    secuencia <- seq(100, 10000, by = 250)
-    f <- function(x) eval(parse(text = input$funcion))
-    
+    lim_inf <- limites()$lim_inf
+    lim_sup <- limites()$lim_sup
     metodo_aleatorio <- if (input$metodo_int == "Multiplicativo") {
-      numeros_multiplicativo
+      function(...) numeros_multiplicativo(...)
     } else {
-      numeros_mixto
+      function(...) numeros_mixto(..., c = input$incremento)
+    }
+    secuencia <- seq(100, 10000, by = 250)
+    
+    if (is.finite(lim_inf) && is.finite(lim_sup)) {
+      # Caso [a, b]
+      if (lim_inf <= lim_sup) {
+        aprox <- sapply(secuencia, function(k) {
+          u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
+          x <- lim_inf + (lim_sup - lim_inf) * u
+          valores <- sapply(x, f)
+          if (all(is.na(valores)) || any(is.infinite(valores))) return(NA)
+          mean(valores, na.rm = TRUE) * (lim_sup - lim_inf)
+        })
+      } else {
+        # Caso [a, b] con a > b
+        aprox <- sapply(secuencia, function(k) {
+          u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
+          x <- lim_sup + (lim_inf - lim_sup) * u
+          valores <- sapply(x, f)
+          if (all(is.na(valores)) || any(is.infinite(valores))) return(NA)
+          -mean(valores, na.rm = TRUE) * (lim_inf - lim_sup)
+        })
+      }
+      teorico <- tryCatch(integrate(f, lower = min(lim_inf, lim_sup), upper = max(lim_inf, lim_sup))$value, error = function(e) NA)
+      if (lim_inf > lim_sup) teorico <- -teorico
+    } else if (is.finite(lim_inf) && is.infinite(lim_sup)) {
+      # Caso [a, ∞]
+      aprox <- sapply(secuencia, function(k) {
+        u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
+        x <- lim_inf - log(1 - u + 1e-10)
+        valores <- sapply(x, f) / dexp(x - lim_inf)
+        if (all(is.na(valores)) || any(is.infinite(valores))) return(NA)
+        mean(valores, na.rm = TRUE)
+      })
+      teorico <- tryCatch(integrate(f, lower = lim_inf, upper = Inf)$value, error = function(e) NA)
+    } else if (is.infinite(lim_inf) && is.finite(lim_sup)) {
+      # Caso [-∞, b]
+      aprox <- sapply(secuencia, function(k) {
+        u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
+        x <- lim_sup + log(u + 1e-10)
+        valores <- sapply(x, f) / dexp(lim_sup - x)
+        if (all(is.na(valores)) || any(is.infinite(valores))) return(NA)
+        mean(valores, na.rm = TRUE)
+      })
+      teorico <- tryCatch(integrate(f, lower = -Inf, upper = lim_sup)$value, error = function(e) NA)
+    } else {
+      # Caso [-∞, ∞]
+      aprox <- sapply(secuencia, function(k) {
+        u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
+        x <- qnorm(u, mean = 0, sd = 1)
+        valores <- sapply(x, f) / dnorm(x)
+        if (all(is.na(valores)) || any(is.infinite(valores))) return(NA)
+        mean(valores, na.rm = TRUE)
+      })
+      teorico <- tryCatch(integrate(f, lower = -Inf, upper = Inf)$value, error = function(e) NA)
     }
     
-    if (input$lim_inf == 0 & input$lim_sup == 1) {
-      data.table(Aproximacion = sapply(secuencia, function(k) {
-        res <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, c = input$incremento, semilla = as.numeric(Sys.time()), cantidad = k)
-        mean(sapply(res, function(x) { eval(parse(text = input$funcion)) }))
-      }), 
-      Teorico = integrate(f, lower = 0, upper = 1)$value) %>% 
-        gather(key = "Etiqueta", value = "Valor") %>% 
-        mutate(Aleatorios = c(secuencia, secuencia)) %>% 
-        ggplot(aes(x = Aleatorios, y = Valor, group = Etiqueta, colour = Etiqueta)) + 
-        geom_line()
+    list(aprox = aprox, teorico = teorico, secuencia = secuencia)
+  })
+  
+  # Gráfico del área bajo la curva
+  output$graf_area <- renderPlot({
+    req(input$calcular)
+    datos <- coords_area()
+    if (is.null(datos)) {
+      ggplot() + 
+        annotate("text", x = 0.5, y = 0.5, label = "Función inválida o no evaluable", size = 5) +
+        theme_minimal()
     } else {
-      data.table(Aproximacion = sapply(secuencia, function(k) {
-        res <- input$lim_inf + (input$lim_sup - input$lim_inf) * metodo_aleatorio(a = 7^5, m = 2^31 - 1, c = input$incremento, semilla = as.numeric(Sys.time()), cantidad = k)
-        mean(sapply(res, function(x) { (input$lim_sup - input$lim_inf) * eval(parse(text = input$funcion)) }))
-      }), 
-      Teorico = integrate(f, lower = input$lim_inf, upper = input$lim_sup)$value) %>% 
-        gather(key = "Etiqueta", value = "Valor") %>% 
-        mutate(Aleatorios = c(secuencia, secuencia)) %>% 
-        ggplot(aes(x = Aleatorios, y = Valor, group = Etiqueta, colour = Etiqueta)) + 
-        geom_line()
+      lim_inf <- limites()$lim_inf
+      lim_sup <- limites()$lim_sup
+      
+      p <- ggplot(datos, aes(x = x, y = y)) +
+        geom_line(color = "blue", linewidth = 1) +
+        labs(title = paste("Área bajo f(x) =", input$funcion),
+             x = "x", y = "f(x)") +
+        theme_minimal()
+      
+      if (is.finite(lim_inf) && is.finite(lim_sup)) {
+        x_fill <- datos$x[datos$x >= min(lim_inf, lim_sup) & datos$x <= max(lim_inf, lim_sup)]
+        y_fill <- datos$y[datos$x >= min(lim_inf, lim_sup) & datos$x <= max(lim_inf, lim_sup)]
+        if (length(x_fill) > 0 && length(y_fill) > 0) {
+          p <- p + geom_area(data = data.frame(x = x_fill, y = y_fill), aes(x = x, y = y), fill = "lightblue", alpha = 0.3) +
+            geom_vline(xintercept = lim_inf, linetype = "dashed", color = "red") +
+            geom_vline(xintercept = lim_sup, linetype = "dashed", color = "red")
+        }
+      }
+      
+      p
+    }
+  })
+  
+  # Gráfico de aproximación
+  output$graf_aprox <- renderPlot({
+    req(input$calcular)
+    mc <- monte_carlo()
+    datos <- data.table(
+      Aproximacion = mc$aprox,
+      Teorico = mc$teorico,
+      Aleatorios = mc$secuencia
+    ) %>% 
+      melt(id.vars = "Aleatorios", variable.name = "Etiqueta", value.name = "Valor")
+    
+    datos <- datos[!is.na(Valor) & is.finite(Valor)]
+    
+    if (nrow(datos) == 0) {
+      ggplot() + 
+        annotate("text", x = 0.5, y = 0.5, label = "No se pueden calcular aproximaciones válidas", size = 5) +
+        theme_minimal()
+    } else {
+      ggplot(datos, aes(x = Aleatorios, y = Valor, color = Etiqueta)) +
+        geom_line() +
+        labs(title = "Aproximación de Monte Carlo",
+             x = "Número de puntos",
+             y = "Valor de la integral",
+             caption = paste("Valor teórico:", ifelse(is.na(mc$teorico), "No disponible", round(mc$teorico, 4)))) +
+        theme_minimal()
     }
   })
 }
