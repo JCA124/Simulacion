@@ -1,4 +1,3 @@
-library(shiny)
 library(kableExtra)
 library(data.table)
 library(ggplot2)
@@ -34,8 +33,7 @@ crear_tabla <- function(numeros, filas, columnas) {
   return(tabla)
 }
 
-# Lógica del servidor
-function(input, output, session) {
+server <- function(input, output, session) {
   
   # Actualizar límites con botones de infinito
   observeEvent(input$inf_neg, {
@@ -101,18 +99,27 @@ function(input, output, session) {
   })
   
   # Pestaña Integrales
-  # Procesar límites
+  # Procesar límites - corrección para evaluar expresiones como pi/2
   limites <- eventReactive(input$calcular, {
-    lim_inf <- tryCatch(as.numeric(input$lim_inf), error = function(e) -Inf, warning = function(w) -Inf)
-    lim_sup <- tryCatch(as.numeric(input$lim_sup), error = function(e) Inf, warning = function(w) Inf)
-    if (tolower(input$lim_inf) == "-inf") lim_inf <- -Inf
-    if (tolower(input$lim_sup) == "inf") lim_sup <- Inf
+    evaluar_limite <- function(expr) {
+      expr_trim <- trimws(expr)
+      if (tolower(expr_trim) == "-inf") return(-Inf)
+      if (tolower(expr_trim) == "inf") return(Inf)
+      valor <- tryCatch(eval(parse(text = expr_trim)), error = function(e) NA_real_)
+      if (is.na(valor) || !is.numeric(valor)) return(NA_real_)
+      return(as.numeric(valor))
+    }
+    
+    lim_inf <- evaluar_limite(input$lim_inf)
+    lim_sup <- evaluar_limite(input$lim_sup)
     list(lim_inf = lim_inf, lim_sup = lim_sup)
   })
   
   # Función para evaluar
   f <- function(x) {
-    tryCatch(eval(parse(text = input$funcion)), error = function(e) NA)
+    tryCatch(eval(parse(text = input$funcion), envir = list(x = x)), 
+             error = function(e) NA, 
+             warning = function(w) NA)
   }
   
   # Generar puntos para el gráfico del área
@@ -121,18 +128,19 @@ function(input, output, session) {
     lim_inf <- limites()$lim_inf
     lim_sup <- limites()$lim_sup
     
+    # Generar puntos según los límites
     if (is.infinite(lim_inf) && is.infinite(lim_sup)) {
-      x_vals <- seq(-5, 5, length.out = 100) # Para [-∞, ∞]
+      x_vals <- seq(-10, 10, length.out = 200)
     } else if (is.infinite(lim_inf)) {
-      x_vals <- seq(lim_sup - 10, lim_sup, length.out = 100) # Para [-∞, b]
+      x_vals <- seq(lim_sup - 20, lim_sup, length.out = 200)
     } else if (is.infinite(lim_sup)) {
-      x_vals <- seq(lim_inf, lim_inf + 10, length.out = 100) # Para [a, ∞]
+      x_vals <- seq(lim_inf, lim_inf + 20, length.out = 200)
     } else {
-      x_vals <- seq(min(lim_inf, lim_sup), max(lim_inf, lim_sup), length.out = 100)
+      x_vals <- seq(min(lim_inf, lim_sup), max(lim_inf, lim_sup), length.out = 200)
     }
     
     y_vals <- sapply(x_vals, f)
-    if (all(is.na(y_vals))) {
+    if (all(is.na(y_vals)) || all(is.infinite(y_vals))) {
       return(NULL)
     }
     data.frame(x = x_vals, y = y_vals)
@@ -151,7 +159,6 @@ function(input, output, session) {
     secuencia <- seq(100, 10000, by = 250)
     
     if (is.finite(lim_inf) && is.finite(lim_sup)) {
-      # Caso [a, b]
       if (lim_inf <= lim_sup) {
         aprox <- sapply(secuencia, function(k) {
           u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
@@ -161,7 +168,6 @@ function(input, output, session) {
           mean(valores, na.rm = TRUE) * (lim_sup - lim_inf)
         })
       } else {
-        # Caso [a, b] con a > b
         aprox <- sapply(secuencia, function(k) {
           u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
           x <- lim_sup + (lim_inf - lim_sup) * u
@@ -170,10 +176,10 @@ function(input, output, session) {
           -mean(valores, na.rm = TRUE) * (lim_inf - lim_sup)
         })
       }
-      teorico <- tryCatch(integrate(f, lower = min(lim_inf, lim_sup), upper = max(lim_inf, lim_sup))$value, error = function(e) NA)
+      teorico <- tryCatch(integrate(f, lower = min(lim_inf, lim_sup), upper = max(lim_inf, lim_sup))$value, 
+                          error = function(e) NA)
       if (lim_inf > lim_sup) teorico <- -teorico
     } else if (is.finite(lim_inf) && is.infinite(lim_sup)) {
-      # Caso [a, ∞]
       aprox <- sapply(secuencia, function(k) {
         u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
         x <- lim_inf - log(1 - u + 1e-10)
@@ -183,7 +189,6 @@ function(input, output, session) {
       })
       teorico <- tryCatch(integrate(f, lower = lim_inf, upper = Inf)$value, error = function(e) NA)
     } else if (is.infinite(lim_inf) && is.finite(lim_sup)) {
-      # Caso [-∞, b]
       aprox <- sapply(secuencia, function(k) {
         u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
         x <- lim_sup + log(u + 1e-10)
@@ -193,7 +198,6 @@ function(input, output, session) {
       })
       teorico <- tryCatch(integrate(f, lower = -Inf, upper = lim_sup)$value, error = function(e) NA)
     } else {
-      # Caso [-∞, ∞]
       aprox <- sapply(secuencia, function(k) {
         u <- metodo_aleatorio(a = 7^5, m = 2^31 - 1, semilla = as.numeric(Sys.time()), cantidad = k)
         x <- qnorm(u, mean = 0, sd = 1)
@@ -211,27 +215,36 @@ function(input, output, session) {
   output$graf_area <- renderPlot({
     req(input$calcular)
     datos <- coords_area()
-    if (is.null(datos)) {
+    
+    # Verificar si los datos son válidos
+    if (is.null(datos) || all(is.na(datos$y)) || all(is.infinite(datos$y))) {
       ggplot() + 
-        annotate("text", x = 0.5, y = 0.5, label = "Función inválida o no evaluable", size = 5) +
+        annotate("text", x = 0.5, y = 0.5, 
+                 label = "Función inválida o no evaluable en el rango especificado", 
+                 size = 5) +
         theme_minimal()
     } else {
       lim_inf <- limites()$lim_inf
       lim_sup <- limites()$lim_sup
       
+      # Crear el gráfico base
       p <- ggplot(datos, aes(x = x, y = y)) +
         geom_line(color = "blue", linewidth = 1) +
         labs(title = paste("Área bajo f(x) =", input$funcion),
              x = "x", y = "f(x)") +
         theme_minimal()
       
+      # Añadir área si los límites son finitos
       if (is.finite(lim_inf) && is.finite(lim_sup)) {
-        x_fill <- datos$x[datos$x >= min(lim_inf, lim_sup) & datos$x <= max(lim_inf, lim_sup)]
-        y_fill <- datos$y[datos$x >= min(lim_inf, lim_sup) & datos$x <= max(lim_inf, lim_sup)]
-        if (length(x_fill) > 0 && length(y_fill) > 0) {
-          p <- p + geom_area(data = data.frame(x = x_fill, y = y_fill), aes(x = x, y = y), fill = "lightblue", alpha = 0.3) +
+        datos_fill <- datos[datos$x >= min(lim_inf, lim_sup) & datos$x <= max(lim_inf, lim_sup), ]
+        if (nrow(datos_fill) > 0 && !all(is.na(datos_fill$y)) && !all(is.infinite(datos_fill$y))) {
+          p <- p + geom_area(data = datos_fill, aes(x = x, y = y), fill = "lightblue", alpha = 0.3) +
             geom_vline(xintercept = lim_inf, linetype = "dashed", color = "red") +
             geom_vline(xintercept = lim_sup, linetype = "dashed", color = "red")
+        } else {
+          p <- p + annotate("text", x = mean(c(lim_inf, lim_sup)), y = 0, 
+                            label = "No se puede calcular el área (valores no válidos)", 
+                            size = 4, color = "red")
         }
       }
       
@@ -254,7 +267,9 @@ function(input, output, session) {
     
     if (nrow(datos) == 0) {
       ggplot() + 
-        annotate("text", x = 0.5, y = 0.5, label = "No se pueden calcular aproximaciones válidas", size = 5) +
+        annotate("text", x = 0.5, y = 0.5, 
+                 label = "No se pueden calcular aproximaciones válidas", 
+                 size = 5) +
         theme_minimal()
     } else {
       ggplot(datos, aes(x = Aleatorios, y = Valor, color = Etiqueta)) +

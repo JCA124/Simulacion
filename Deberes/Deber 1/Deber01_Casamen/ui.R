@@ -3,7 +3,10 @@ library(kableExtra)
 library(shinycssloaders)
 
 fluidPage(
-  titlePanel("Generación de números aleatorios e integrales"),
+  tags$style("h1 {color: #d8cdaa; font-size:35px}"),
+  tags$style("h2 {color: #b7b9c1; font-size:25px}"),
+  fluidRow(column(width = 3, tags$img(src="EPN_logo.png", width = "60px", height = "60px")),
+           column(width = 9, h1("Simulación", style = "text-align:center"))),
   
   tabsetPanel(
     tabPanel("Números Aleatorios",
