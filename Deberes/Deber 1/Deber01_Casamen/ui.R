@@ -164,10 +164,18 @@ fluidPage(
                                          style = "background-color: #1D3557; color: white; width: 100%; height: 45px; font-size: 16px; border-radius: 6px;")
                    ),
                    tabPanel("Binomial Negativa",
-                            numericInput("r_binomial_neg", "Número de éxitos (r):", value = 5, min = 1, step = 1),
+                            numericInput("r_binomial_neg", "Número de éxitos:", value = 5, min = 1, step = 1),
                             numericInput("p_binomial_neg", "Probabilidad de éxito (p):", value = 0.5, min = 0, max = 1, step = 0.01),
                             numericInput("simulaciones_binomial_neg", "Cantidad de simulaciones:", value = 1000, min = 1, step = 1),
                             actionButton("simular_binomial_neg", "Simular",
+                                         style = "background-color: #1D3557; color: white; width: 100%; height: 45px; font-size: 16px; border-radius: 6px;")
+                   ),
+                   tabPanel("Otro",
+                            numericInput("size_custom", "Tamaño del vector:", value = 3, min = 1, max = 20, step = 1),
+                            uiOutput("custom_inputs"),
+                            numericInput("simulaciones_custom", "Cantidad de simulaciones:", value = 1000, min = 1, step = 1),
+                            textOutput("prob_validation"),
+                            actionButton("simular_custom", "Simular",
                                          style = "background-color: #1D3557; color: white; width: 100%; height: 45px; font-size: 16px; border-radius: 6px;")
                    )
                  )
@@ -177,11 +185,11 @@ fluidPage(
                  style = "background-color: white; border-radius: 8px; padding: 20px;",
                  
                  conditionalPanel(
-                   condition = "input.simular_binomial!=0 || input.simular_poisson!=0 || input.simular_binomial_neg!=0",
+                   condition = "input.simular_binomial!=0 || input.simular_poisson!=0 || input.simular_binomial_neg!=0 || input.simular_custom!=0",
                    div(
                      style = "background-color: #f8f9fa; border-radius: 6px; padding: 15px; margin-bottom: 20px;",
                      h4("Resultados de Simulación:", style = "color: #2c3e50;"),
-                     tableOutput("resultados_simulacion")  # Changed from DTOutput to tableOutput
+                     tableOutput("resultados_simulacion") 
                    ),
                    div(
                      style = "background-color: #f8f9fa; border-radius: 6px; padding: 15px; margin-bottom: 20px;",
@@ -191,7 +199,10 @@ fluidPage(
                    div(
                      style = "background-color: #f8f9fa; border-radius: 6px; padding: 15px;",
                      h4("Resumen Estadístico:", style = "color: #2c3e50;"),
-                     verbatimTextOutput("resumen_estadistico")
+                     verbatimTextOutput("resumen_estadistico"),
+                     br(),
+                     downloadButton("descargar_pdf", "Reporte PDF",
+                                    style = "background-color: #1D3557; color: white; width: 20%; height: 45px; font-size: 16px; border-radius: 6px;")
                    )
                  )
                )

@@ -4,6 +4,9 @@ library(data.table)
 library(tidyverse)
 library(ggplot2)
 library(DT)
+library(knitr)
+library(rmarkdown)
+library(tinytex)
 
 # Función que genera números aleatorios bajo el método congruencial multiplicativo
 random_cong <- function(a, m, x0, n) {
@@ -34,7 +37,7 @@ conv_matrix <- function(vector, cols = 10) {
 }
 
 # Servidor
-function(input, output, session) {
+server <- function(input, output, session) {
   
   #### Generación números aleatorios #######################################################
   
@@ -332,6 +335,122 @@ function(input, output, session) {
   
   ####### DISTRIBUCIONES DISCRETAS #################################################################
   
+  # Reactive values to store simulation data
+  sim_data <- reactiveValues(resultados = NULL,dist_type = NULL,params = NULL, plot = NULL,summary = NULL)
+  
+  # UI Dinamico
+  output$custom_inputs <- renderUI({
+    req(input$size_custom)
+    size <- input$size_custom
+    inputs <- lapply(1:size, function(i) {
+      fluidRow(
+        column(6, numericInput(paste0("value_", i), paste("Valor", i, ":"), value = i, step = 1)),
+        column(6, numericInput(paste0("prob_", i), paste("Probabilidad", i, ":"), value = 1/size, min = 0, max = 1, step = 0.01))
+      )
+    })
+    do.call(tagList, inputs)
+  })
+  
+  # Validar Probabilidades
+  output$prob_validation <- renderText({
+    req(input$size_custom)
+    size <- input$size_custom
+    probs <- numeric(size)
+    for (i in 1:size) {
+      prob <- input[[paste0("prob_", i)]]
+      if (is.null(prob)) return("Por favor, ingrese todas las probabilidades.")
+      probs[i] <- as.numeric(prob)
+    }
+    if (any(is.na(probs))) return("Todas las probabilidades deben ser números válidos.")
+    prob_sum <- sum(probs)
+    if (abs(prob_sum - 1) > 0.01) {
+      return(sprintf("Las probabilidades deben sumar 1 (suma actual: %.3f).", prob_sum))
+    }
+    ""
+  })
+  
+  # Distribución (Otro)
+  observeEvent(input$simular_custom, {
+    req(input$size_custom, input$simulaciones_custom)
+    size <- input$size_custom
+    n <- input$simulaciones_custom
+    
+    # Collect values and probabilities
+    values <- sapply(1:size, function(i) input[[paste0("value_", i)]])
+    probs <- sapply(1:size, function(i) as.numeric(input[[paste0("prob_", i)]]))
+    
+    # Validate inputs
+    if (any(is.null(values)) || any(is.null(probs)) || any(is.na(probs))) {
+      showNotification("Complete todos los valores y probabilidades con números válidos.", type = "error")
+      return()
+    }
+    if (abs(sum(probs) - 1) > 0.01) {
+      showNotification("Las probabilidades deben sumar aproximadamente 1.", type = "error")
+      return()
+    }
+    
+    # Almacenamiento de datos simulados
+    sim_data$resultados <- sample(values, size = n, replace = TRUE, prob = probs)
+    sim_data$dist_type <- "Otro"
+    sim_data$params <- list(values = values, probs = probs, simulaciones = n)
+    
+    output$resultados_simulacion <- function() {
+      res <- conv_matrix(sim_data$resultados, cols = 10)
+      kbl(res, booktabs = TRUE, escape = FALSE, align = "c", digits = 0) %>%
+        kable_styling(
+          full_width = FALSE,bootstrap_options = c("bordered", "striped", "hover", "condensed"),
+          font_size = 13) %>%
+        row_spec(0, background = "#d0d394", color = "#211d1d", bold = TRUE) %>%
+        scroll_box(width = "100%", height = "250px")
+    }
+    
+    output$histograma_simulacion <- renderPlot({
+      datos <- data.frame(Valores = sim_data$resultados)
+      values_ordered <- sort(unique(as.numeric(sim_data$params$values)))
+      probs <- sim_data$params$probs[match(values_ordered, sim_data$params$values)]
+      
+      # Crear datos para la curva (PMF en los valores)
+      pmf_data <- data.frame(
+        x = values_ordered,
+        Prob = probs
+      )
+      
+      sim_data$plot <- ggplot() +
+        geom_histogram(data = datos, aes(x = Valores, y = ..density..), 
+                       fill = "#06a480", color = "#2a2727", 
+                       breaks = seq(min(values_ordered) - 0.5, max(values_ordered) + 0.5, by = 1)) +
+        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 1) +
+        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 3) +
+        scale_x_continuous(breaks = values_ordered, labels = as.character(values_ordered)) +
+        labs(
+          title = "Otra Distribución",
+          x = "Valores Simulados",
+          y = "Densidad"
+        ) +
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(face = "bold", color = "#2c3e50"),
+          axis.title = element_text(face = "bold")
+        )
+      
+      sim_data$plot
+    })
+    
+    output$resumen_estadistico <- renderPrint({
+      resumen <- capture.output({
+        cat("Resumen de Simulaciones:\n")
+        cat("Media:", round(mean(sim_data$resultados), 4), "\n")
+        cat("Desviación Estándar:", round(sd(sim_data$resultados), 4), "\n")
+        cat("Mínimo:", min(sim_data$resultados), "\n")
+        cat("Máximo:", max(sim_data$resultados), "\n")
+        cat("Cuartiles:\n")
+        print(quantile(sim_data$resultados))
+      })
+      sim_data$summary <- resumen
+      cat(resumen, sep = "\n")
+    })
+  })
+  
   # Binomial Distribution
   observeEvent(input$simular_binomial, {
     req(input$n_binomial, input$p_binomial, input$simulaciones_binomial)
@@ -340,52 +459,60 @@ function(input, output, session) {
     size <- input$n_binomial
     prob <- input$p_binomial
     
-    resultados <- rbinom(n, size, prob)
+    sim_data$resultados <- rbinom(n, size, prob)
+    sim_data$dist_type <- "Binomial"
+    sim_data$params <- list(n = size, p = prob, simulaciones = n)
     
     output$resultados_simulacion <- function() {
-      res <- conv_matrix(resultados, cols = 10)
+      res <- conv_matrix(sim_data$resultados, cols = 10)
       kbl(res, booktabs = TRUE, escape = FALSE, align = "c", digits = 0) %>%
         kable_styling(
           full_width = FALSE,
           bootstrap_options = c("bordered", "striped", "hover", "condensed"),
           font_size = 13
         ) %>%
-        row_spec(0, background = "#1e81b0", color = "white", bold = TRUE) %>%
+        row_spec(0, background = "#d0d394", color = "#211d1d", bold = TRUE) %>%
         scroll_box(width = "100%", height = "250px")
     }
     
     output$histograma_simulacion <- renderPlot({
-      datos <- data.frame(Valores = resultados)
-      x_range <- 0:max(max(resultados), size)
+      datos <- data.frame(Valores = sim_data$resultados)
+      x_range <- 0:max(max(sim_data$resultados), size)
+      
+      # Crear datos para la curva (PMF en los valores)
       pmf_data <- data.frame(
         x = x_range,
         Prob = dbinom(x_range, size = size, prob = prob)
       )
       
-      ggplot(datos, aes(x = Valores)) +
-        geom_bar(aes(y = ..prop..), fill = "#69b3a2", color = "black", width = 0.4) +
-        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 3) +
-        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 1) +
+      sim_data$plot <- ggplot() +
+        geom_histogram(data = datos, aes(x = Valores, y = ..density..), 
+                       fill = "#06a480", color = "#2a2727",  breaks = seq(-0.5, max(x_range) + 0.5, by = 1)) +
+        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 1) +
+        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 3) +
         labs(
-          title = paste("Histograma de Simulaciones - Binomial (n =", size, ", p =", prob, ")"),
-          x = "Valores Simulados",
-          y = "Proporción"
-        ) +
+          title = paste("Binomial (n =", size, ", p =", prob, ")"),x = "Valores Simulados",y = "Densidad") +
         theme_minimal(base_size = 14) +
         theme(
           plot.title = element_text(face = "bold", color = "#2c3e50"),
           axis.title = element_text(face = "bold")
         )
+      
+      sim_data$plot
     })
     
     output$resumen_estadistico <- renderPrint({
-      cat("Resumen de Simulaciones:\n")
-      cat("Media:", round(mean(resultados), 4), "\n")
-      cat("Desviación Estándar:", round(sd(resultados), 4), "\n")
-      cat("Mínimo:", min(resultados), "\n")
-      cat("Máximo:", max(resultados), "\n")
-      cat("Cuartiles:\n")
-      print(quantile(resultados))
+      resumen <- capture.output({
+        cat("Resumen de Simulaciones:\n")
+        cat("Media:", round(mean(sim_data$resultados), 4), "\n")
+        cat("Desviación Estándar:", round(sd(sim_data$resultados), 4), "\n")
+        cat("Mínimo:", min(sim_data$resultados), "\n")
+        cat("Máximo:", max(sim_data$resultados), "\n")
+        cat("Cuartiles:\n")
+        print(quantile(sim_data$resultados))
+      })
+      sim_data$summary <- resumen
+      cat(resumen, sep = "\n")
     })
   })
   
@@ -396,52 +523,60 @@ function(input, output, session) {
     n <- input$simulaciones_poisson
     lambda <- input$lambda_poisson
     
-    resultados <- rpois(n, lambda)
+    sim_data$resultados <- rpois(n, lambda)
+    sim_data$dist_type <- "Poisson"
+    sim_data$params <- list(lambda = lambda, simulaciones = n)
     
     output$resultados_simulacion <- function() {
-      res <- conv_matrix(resultados, cols = 10)
+      res <- conv_matrix(sim_data$resultados, cols = 10)
       kbl(res, booktabs = TRUE, escape = FALSE, align = "c", digits = 0) %>%
         kable_styling(
           full_width = FALSE,
           bootstrap_options = c("bordered", "striped", "hover", "condensed"),
           font_size = 13
         ) %>%
-        row_spec(0, background = "#1e81b0", color = "white", bold = TRUE) %>%
+        row_spec(0, background = "#d0d394", color = "#211d1d", bold = TRUE) %>%
         scroll_box(width = "100%", height = "250px")
     }
     
     output$histograma_simulacion <- renderPlot({
-      datos <- data.frame(Valores = resultados)
-      x_range <- 0:max(max(resultados), qpois(0.999, lambda))
+      datos <- data.frame(Valores = sim_data$resultados)
+      x_range <- 0:max(max(sim_data$resultados), qpois(0.999, lambda))
+      
+      # Crear datos para la curva (PMF en los valores)
       pmf_data <- data.frame(
         x = x_range,
         Prob = dpois(x_range, lambda = lambda)
       )
       
-      ggplot(datos, aes(x = Valores)) +
-        geom_bar(aes(y = ..prop..), fill = "#69b3a2", color = "black", width = 0.4) +
-        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 3) +
-        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 1) +
+      sim_data$plot <- ggplot() +
+        geom_histogram(data = datos, aes(x = Valores, y = ..density..), 
+                       fill = "#06a480", color = "#2a2727",breaks = seq(-0.5, max(x_range) + 0.5, by = 1)) +
+        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 1) +
+        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 3) +
         labs(
-          title = paste("Histograma de Simulaciones - Poisson (λ =", lambda, ")"),
-          x = "Valores Simulados",
-          y = "Proporción"
-        ) +
+          title = paste("Poisson (λ =", lambda, ")"),x = "Valores Simulados",y = "Densidad") +
         theme_minimal(base_size = 14) +
         theme(
           plot.title = element_text(face = "bold", color = "#2c3e50"),
           axis.title = element_text(face = "bold")
         )
+      
+      sim_data$plot
     })
     
     output$resumen_estadistico <- renderPrint({
-      cat("Resumen de Simulaciones:\n")
-      cat("Media:", round(mean(resultados), 4), "\n")
-      cat("Desviación Estándar:", round(sd(resultados), 4), "\n")
-      cat("Mínimo:", min(resultados), "\n")
-      cat("Máximo:", max(resultados), "\n")
-      cat("Cuartiles:\n")
-      print(quantile(resultados))
+      resumen <- capture.output({
+        cat("Resumen de Simulaciones:\n")
+        cat("Media:", round(mean(sim_data$resultados), 4), "\n")
+        cat("Desviación Estándar:", round(sd(sim_data$resultados), 4), "\n")
+        cat("Mínimo:", min(sim_data$resultados), "\n")
+        cat("Máximo:", max(sim_data$resultados), "\n")
+        cat("Cuartiles:\n")
+        print(quantile(sim_data$resultados))
+      })
+      sim_data$summary <- resumen
+      cat(resumen, sep = "\n")
     })
   })
   
@@ -453,52 +588,152 @@ function(input, output, session) {
     size <- input$r_binomial_neg
     prob <- input$p_binomial_neg
     
-    resultados <- rnbinom(n, size, prob)
+    sim_data$resultados <- rnbinom(n, size, prob)
+    sim_data$dist_type <- "Binomial Negativa"
+    sim_data$params <- list(r = size, p = prob, simulaciones = n)
     
     output$resultados_simulacion <- function() {
-      res <- conv_matrix(resultados, cols = 10)
+      res <- conv_matrix(sim_data$resultados, cols = 10)
       kbl(res, booktabs = TRUE, escape = FALSE, align = "c", digits = 0) %>%
         kable_styling(
           full_width = FALSE,
           bootstrap_options = c("bordered", "striped", "hover", "condensed"),
           font_size = 13
         ) %>%
-        row_spec(0, background = "#1e81b0", color = "white", bold = TRUE) %>%
+        row_spec(0, background = "#d0d394", color = "#211d1d", bold = TRUE) %>%
         scroll_box(width = "100%", height = "250px")
     }
     
     output$histograma_simulacion <- renderPlot({
-      datos <- data.frame(Valores = resultados)
-      x_range <- 0:max(max(resultados), qnbinom(0.999, size, prob))
+      datos <- data.frame(Valores = sim_data$resultados)
+      x_range <- 0:max(max(sim_data$resultados), qnbinom(0.999, size, prob))
+      
+      # Crear datos para la curva (PMF en los valores)
       pmf_data <- data.frame(
         x = x_range,
         Prob = dnbinom(x_range, size = size, prob = prob)
       )
       
-      ggplot(datos, aes(x = Valores)) +
-        geom_bar(aes(y = ..prop..), fill = "#69b3a2", color = "black", width = 0.4) +
-        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 3) +
-        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "red", size = 1) +
+      sim_data$plot <- ggplot() +
+        geom_histogram(data = datos, aes(x = Valores, y = ..density..), 
+                       fill = "#06a480", color = "#2a2727", breaks = seq(-0.5, max(x_range) + 0.5, by = 1)) +
+        geom_line(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 1) +
+        geom_point(data = pmf_data, aes(x = x, y = Prob), color = "#ceab1d", size = 3) +
         labs(
-          title = paste("Histograma de Simulaciones - Binomial Negativa (r =", size, ", p =", prob, ")"),
-          x = "Valores Simulados",
-          y = "Proporción"
-        ) +
-        theme_minimal(base_size = 14) +
-        theme(
-          plot.title = element_text(face = "bold", color = "#2c3e50"),
-          axis.title = element_text(face = "bold")
+          title = paste(" Binomial Negativa (r =", size, ", p =", prob, ")"),x = "Valores Simulados",
+          y = "Densidad") +theme_minimal(base_size = 14) +
+        theme(plot.title = element_text(face = "bold", color = "#2c3e50"),axis.title = element_text(face = "bold")
         )
+      
+      sim_data$plot
     })
     
     output$resumen_estadistico <- renderPrint({
-      cat("Resumen de Simulaciones:\n")
-      cat("Media:", round(mean(resultados), 4), "\n")
-      cat("Desviación Estándar:", round(sd(resultados), 4), "\n")
-      cat("Mínimo:", min(resultados), "\n")
-      cat("Máximo:", max(resultados), "\n")
-      cat("Cuartiles:\n")
-      print(quantile(resultados))
+      resumen <- capture.output({
+        cat("Resumen de Simulaciones:\n")
+        cat("Media:", round(mean(sim_data$resultados), 4), "\n")
+        cat("Desviación Estándar:", round(sd(sim_data$resultados), 4), "\n")
+        cat("Mínimo:", min(sim_data$resultados), "\n")
+        cat("Máximo:", max(sim_data$resultados), "\n")
+        cat("Cuartiles:\n")
+        print(quantile(sim_data$resultados))
+      })
+      sim_data$summary <- resumen
+      cat(resumen, sep = "\n")
     })
   })
+  
+  # PDF Download Handler
+  output$descargar_pdf <- downloadHandler(
+    filename = function() {
+      paste("Reporte_", sim_data$dist_type, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf", sep = "")
+    },
+    content = function(file) {
+      # Create temporary Rmd and PNG files
+      temp_rmd <- tempfile(fileext = ".Rmd")
+      temp_png <- tempfile(fileext = ".png")
+      
+      # Save the plot as a PNG
+      ggsave(temp_png, plot = sim_data$plot, width = 8, height = 6, dpi = 300)
+      
+      # Create Rmd content
+      rmd_content <- paste0(
+        "---\n",
+        "title: 'Reporte de Simulación: ", sim_data$dist_type, "'\n",
+        "date: '", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "'\n",
+        "output:\n",
+        "  pdf_document:\n",
+        "    latex_engine: pdflatex\n",
+        "    keep_tex: false\n",
+        "geometry: margin=1in\n",
+        "header-includes:\n",
+        "  - \\usepackage{booktabs}\n",
+        "  - \\usepackage{longtable}\n",
+        "  - \\usepackage{graphicx}\n",
+        "  - \\usepackage{array}\n",
+        "  - \\usepackage{geometry}\n",
+        "  - \\usepackage{amsmath}\n",
+        "  - \\usepackage[utf8]{inputenc}\n",
+        "  - \\usepackage[T1]{fontenc}\n",
+        "  - \\usepackage{lmodern}\n",
+        "---\n\n",
+        "# Reporte de Simulación\n\n",
+        "## Parámetros de Entrada\n\n",
+        if (sim_data$dist_type == "Binomial") {
+          paste0(
+            "- **Distribución**: Binomial\n",
+            "- **Número de ensayos (n)**: ", sim_data$params$n, "\n",
+            "- **Probabilidad de éxito (p)**: ", sim_data$params$p, "\n",
+            "- **Cantidad de simulaciones**: ", sim_data$params$simulaciones, "\n"
+          )
+        } else if (sim_data$dist_type == "Poisson") {
+          paste0(
+            "- **Distribución**: Poisson\n",
+            "- **Parámetro λ**: ", sim_data$params$lambda, "\n",
+            "- **Cantidad de simulaciones**: ", sim_data$params$simulaciones, "\n"
+          )
+        } else if (sim_data$dist_type == "Binomial Negativa") {
+          paste0(
+            "- **Distribución**: Binomial Negativa\n",
+            "- **Número de éxitos (r)**: ", sim_data$params$r, "\n",
+            "- **Probabilidad de éxito (p)**: ", sim_data$params$p, "\n",
+            "- **Cantidad de simulaciones**: ", sim_data$params$simulaciones, "\n"
+          )
+        } else if (sim_data$dist_type == "Personalizada") {
+          values_str <- paste(sim_data$params$values, collapse = ", ")
+          probs_str <- paste(round(sim_data$params$probs, 4), collapse = ", ")
+          paste0(
+            "- **Distribución**: Personalizada\n",
+            "- **Valores**: ", values_str, "\n",
+            "- **Probabilidades**: ", probs_str, "\n",
+            "- **Cantidad de simulaciones**: ", sim_data$params$simulaciones, "\n"
+          )
+        },
+        "\n\n## Resultados de Simulación\n\n",
+        "```{r, echo=FALSE, results='asis'}\n",
+        "library(kableExtra)\n",
+        "res <- conv_matrix(sim_data$resultados, cols = 10)\n",
+        "kbl(res, booktabs = TRUE, align = 'c', digits = 0, caption = 'Resultados de Simulación') %>%",
+        "  kable_styling(latex_options = c('striped', 'condensed'), font_size = 10) %>%",
+        "  row_spec(0, bold = TRUE, background = '#1e81b0', color = 'white')\n",
+        "```\n\n",
+        "## Histograma de Simulaciones\n\n",
+        "\\includegraphics[width=\\linewidth]{", temp_png, "}\n\n",
+        "## Resumen Estadístico\n\n",
+        "```{r, echo=FALSE, results='asis'}\n",
+        "cat(sim_data$summary, sep = '\\n')\n",
+        "```\n"
+      )
+      
+      # Write Rmd content to file
+      writeLines(rmd_content, temp_rmd)
+      
+      # Render Rmd to PDF
+      rmarkdown::render(temp_rmd, output_file = file, clean = TRUE)
+      
+      # Clean up temporary files
+      unlink(temp_png)
+      unlink(temp_rmd)
+    }
+  )
 }
